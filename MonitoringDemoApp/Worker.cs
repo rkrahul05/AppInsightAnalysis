@@ -9,6 +9,7 @@ namespace MonitoringDemoApp
         private readonly TelemetryClient _telemetryClient;
         private readonly HttpClient _httpClient;
         private readonly IConfiguration _configuration;
+        private Timer _heartbeatTimer;
 
         public Worker(ILogger<Worker> logger, TelemetryClient telemetryClient, HttpClient httpClient, IConfiguration configuration)
         {
@@ -20,14 +21,20 @@ namespace MonitoringDemoApp
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
+            // Start the heartbeat every 5 minutes
+            _heartbeatTimer = new Timer(SendHeartbeat, null, TimeSpan.Zero, TimeSpan.FromSeconds(10));
+
+            var environment = _configuration.GetValue<string>("Environment") ?? "Unknown";
             while (!stoppingToken.IsCancellationRequested)
             {
+                var startTime = DateTime.UtcNow;
+                var correlationId = Guid.NewGuid().ToString();
                 try
                 {
-
+                    
                     // Execute Calculation Model
                     await ExecuteCalculationModel("Model1");
-                    var environment = _configuration.GetValue<string>("Environment") ?? "Unknown";
+                   
                     Console.WriteLine(environment);
 
 
@@ -35,20 +42,43 @@ namespace MonitoringDemoApp
                     await CallAscApi();
 
                     // Log success
-                    _telemetryClient.TrackEvent("WorkerServiceExecutionSuccess10Minute");
-                    _telemetryClient.GetMetric("WorkerServiceSuccessCount10Minute").TrackValue(1);
+                    //_telemetryClient.TrackEvent("WorkerServiceExecutionSuccess10Minute");
+                    //_telemetryClient.GetMetric("FileService.SuccessCount").TrackValue(1);
+
+                    LogSuccess(correlationId, startTime, environment);
 
                     // Wait before the next execution cycle
-                    await Task.Delay(3000, stoppingToken);
+                    Console.WriteLine("I got executed after ****************************************************");
+                    await Task.Delay(36000, stoppingToken);
                 }
                 catch (Exception ex)
                 {
                     // Log failure and send notification
                     //_telemetryClient.TrackException(ex);
                     //LogException(ex, "File worker service execution failed");
-                    _telemetryClient.GetMetric("WorkerServiceFailCount10Minute").TrackValue(1);
+                    LogFailure(ex, correlationId, environment);
+                    //_telemetryClient.GetMetric("FileService.FailureCount").TrackValue(1);
                 }
             }
+        }
+
+        private void SendHeartbeat(object state)
+        {
+            var properties = new Dictionary<string, string>
+            {
+                { "ServiceName", "AscFileService" },
+                { "Environment", _configuration.GetValue<string>("Environment") ?? "Unknown" },
+                { "Status", "Running" }
+            };
+
+            _telemetryClient.TrackEvent("AscFileServiceHeartbeat", properties);
+            _telemetryClient.GetMetric("AscFileService.HeartbeatCount").TrackValue(1);
+        }
+        public override async Task StopAsync(CancellationToken stoppingToken)
+        {
+            _logger.LogInformation("Worker is stopping at: {time}", DateTimeOffset.Now);
+            _heartbeatTimer?.Dispose();
+            await base.StopAsync(stoppingToken);
         }
         private async Task ExecuteCalculationModel(string modelName)
         {
@@ -180,6 +210,51 @@ namespace MonitoringDemoApp
             _telemetryClient.TrackException(ex, properties);
             // Log to Console or other loggers as needed
             _logger.LogError(ex, message);
+        }
+        private void LogSuccess(string correlationId, DateTime startTime, string environment)
+        {
+            var duration = DateTime.UtcNow - startTime;
+
+            _logger.LogInformation(
+                "Job succeeded: AscFileService | CorrelationId: {CorrelationId} | Environment: {Environment} | Duration: {DurationMs}ms",
+                correlationId, environment, duration.TotalMilliseconds);
+
+            _telemetryClient.TrackEvent("AscFileService.Success",
+                new System.Collections.Generic.Dictionary<string, string>
+                {
+                    { "CorrelationId", correlationId },
+                    { "JobName", "AscFileService" },
+                    { "Environment", environment },
+                    { "Status", "Success" },
+                    { "ExecutionStartTime", startTime.ToString("o") },
+                    { "ExecutionEndTime", DateTime.UtcNow.ToString("o") },
+                    { "Duration", duration.TotalMilliseconds.ToString()+ "ms" }
+                });
+
+            _telemetryClient.GetMetric("AscFileService.SuccessCount").TrackValue(1);
+        }
+        private void LogFailure(Exception ex, string correlationId, string environment)
+        {
+            var timestamp = DateTime.UtcNow;
+
+            _logger.LogError(ex,
+                "Job failed: AscFileService | CorrelationId: {CorrelationId} | Environment: {Environment} | Error: {ErrorMessage} | Timestamp: {Timestamp}",
+                correlationId, environment, ex.Message, timestamp);
+
+            var exceptionTelemetry = new ExceptionTelemetry(ex)
+            {
+                Message = "Error while fetching or uploading live data from ASC API to Blob Storage",
+                SeverityLevel = SeverityLevel.Error,
+                Timestamp = timestamp
+            };
+            exceptionTelemetry.Properties.Add("CorrelationId", correlationId);
+            exceptionTelemetry.Properties.Add("JobName", "AscFileService");
+            exceptionTelemetry.Properties.Add("Environment", environment);
+            exceptionTelemetry.Properties.Add("ErrorMessage", ex.Message);
+            exceptionTelemetry.Properties.Add("StackTrace", ex.StackTrace ?? "N/A");
+
+            _telemetryClient.TrackException(exceptionTelemetry);
+            _telemetryClient.GetMetric("AscFileService.FailureCount").TrackValue(1);
         }
     }
 
