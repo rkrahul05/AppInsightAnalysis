@@ -49,7 +49,7 @@ namespace MonitoringDemoApp
 
                     // Wait before the next execution cycle
                     Console.WriteLine("I got executed after ****************************************************");
-                    await Task.Delay(36000, stoppingToken);
+                    
                 }
                 catch (Exception ex)
                 {
@@ -59,11 +59,13 @@ namespace MonitoringDemoApp
                     LogFailure(ex, correlationId, environment);
                     //_telemetryClient.GetMetric("FileService.FailureCount").TrackValue(1);
                 }
+                await Task.Delay(36000, stoppingToken);
             }
         }
 
         private void SendHeartbeat(object state)
         {
+            Console.WriteLine($"Sending heartbeat in every 10sec {DateTime.UtcNow}");
             var properties = new Dictionary<string, string>
             {
                 { "ServiceName", "AscFileService" },
@@ -71,8 +73,16 @@ namespace MonitoringDemoApp
                 { "Status", "Running" }
             };
 
-            _telemetryClient.TrackEvent("AscFileServiceHeartbeat", properties);
-            _telemetryClient.GetMetric("AscFileService.HeartbeatCount").TrackValue(1);
+            //_telemetryClient.TrackEvent("AscFileServiceHeartbeat", properties);
+            //_telemetryClient.GetMetric("AscFileService.HeartbeatCount").TrackValue(1);
+            _telemetryClient.GetMetric("AscHistoricalFileService.HeartbeatCount").TrackValue(1);
+            _telemetryClient.GetMetric("AscHistoricalSensorDataService.HeartbeatCount").TrackValue(1);
+            _telemetryClient.GetMetric("AscSensorDataService.HeartbeatCount").TrackValue(1);
+            _telemetryClient.GetMetric("CmsSensorDataService.HeartbeatCount").TrackValue(1);
+            _telemetryClient.GetMetric("DataProcesssor.HeartbeatCount").TrackValue(1);
+            _telemetryClient.GetMetric("HistoricalDataProcessor.HeartbeatCount").TrackValue(1);
+
+
         }
         public override async Task StopAsync(CancellationToken stoppingToken)
         {
@@ -228,7 +238,7 @@ namespace MonitoringDemoApp
                     { "Status", "Success" },
                     { "ExecutionStartTime", startTime.ToString("o") },
                     { "ExecutionEndTime", DateTime.UtcNow.ToString("o") },
-                    { "Duration", duration.TotalMilliseconds.ToString()+ "ms" }
+                    { "Duration", duration.TotalMilliseconds.ToString() + "ms" }
                 });
 
             _telemetryClient.GetMetric("AscFileService.SuccessCount").TrackValue(1);
